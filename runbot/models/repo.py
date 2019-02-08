@@ -264,28 +264,27 @@ class runbot_repo(models.Model):
         build_ids._schedule()
 
         # launch new tests
-        testing = Build.search_count(domain_host + [('state', '=', 'testing')])
-
-        while testing < workers:
-
-            # find sticky / priority pending build if any, otherwise, last pending (by id, not by sequence) will do the job
-            # obtain a lock on the first pending build to be sure that another runbot instance will not schedule it
-            query = """SELECT runbot_build.id FROM runbot_build
-                       LEFT JOIN runbot_branch ON runbot_branch.id = runbot_build.branch_id
-                       WHERE runbot_build.repo_id IN %(repo_ids)s
-                       AND runbot_build.state='pending'
-                       AND runbot_branch.job_type != 'none'
-                       ORDER BY runbot_branch.sticky DESC, runbot_branch.priority DESC, runbot_build.sequence ASC
-                       LIMIT 1
-                       FOR UPDATE OF runbot_build SKIP LOCKED"""
-            self.env.cr.execute(query, {'repo_ids': tuple(ids)})
-            pending_build = Build.browse(self.env.cr.fetchone())
-            if not pending_build:
-                break
-            pending_build._schedule()
-
-            # compute the number of testing and pending jobs again
-            testing = Build.search_count(domain_host + [('state', '=', 'testing')])
+        nb_testing = Build.search_count(domain_host + [('state', '=', 'testing')])
+        available_slots = workers - nb_testing
+        if available_slots > 0:
+            # self-assign to be sure that another runbot instance cannot self assign the same builds
+            query = """UPDATE runbot_build
+                       SET host=%(host)s
+                       WHERE runbot_build.id in (
+                         SELECT runbot_build.id FROM runbot_build
+                         LEFT JOIN runbot_branch ON runbot_branch.id = runbot_build.branch_id
+                         WHERE runbot_build.repo_id IN %(repo_ids)s
+                         AND runbot_build.state='pending'
+                         AND runbot_branch.job_type != 'none'
+                         AND runbot_build.host is null
+                         ORDER BY runbot_branch.sticky DESC, runbot_branch.priority DESC, runbot_build.sequence ASC
+                         LIMIT %(available_slots)s
+                         FOR UPDATE OF runbot_build SKIP LOCKED
+                       )"""
+            self.env.cr.execute(query, {'repo_ids': tuple(ids), 'host': fqdn(), 'available_slots': available_slots})
+            pending_build = Build.search(domain + domain_host + [('state', '=', 'pending')])
+            if pending_build:
+                pending_build._schedule()
 
         # terminate and reap doomed build
         build_ids = Build.search(domain_host + [('state', '=', 'running')]).ids
