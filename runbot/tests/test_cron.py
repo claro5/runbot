@@ -6,6 +6,7 @@ import tempfile
 from unittest.mock import patch
 
 from odoo.tests import TransactionCase
+from odoo.tools import mute_logger
 
 def fake_schedule(fake_self):
     for build in fake_self:
@@ -38,9 +39,13 @@ class TestCron(TransactionCase):
         subprocess.check_output(cmd, cwd=self.git_dir)
 
     def test_runbot_cron(self):
-        """ Test repo is updated and pending builds are created """
+        """ Test pending builds are created """
         subject = 'First commit'
         self.git(['commit', '--allow-empty', '-m', subject])
+        # Test the case where the repo is not yet cloned
+        with mute_logger('odoo.addons.runbot.models.repo'):
+            self.repo._cron()
+        self.repo._update_git()
         self.repo._cron()
         branch = self.env['runbot.branch'].search([('repo_id', '=', self.repo.id)], limit=1)
         self.assertTrue(branch)
@@ -50,6 +55,7 @@ class TestCron(TransactionCase):
 
         # check that the previous build is skipped if a newer one is found before its start
         self.git(['commit', '--allow-empty', '-m', 'A second commit'])
+        self.repo._update_git()
         self.repo._cron()
         self.assertEqual(build.state, 'done')
         self.assertEqual(build.result, 'skipped')
