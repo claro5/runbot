@@ -11,11 +11,17 @@ import subprocess
 import time
 
 from odoo import models, fields, api
+from odoo.exceptions import except_orm
 from odoo.modules.module import get_module_resource
 from odoo.tools import config
 from ..common import fqdn, dt2time
 
 _logger = logging.getLogger(__name__)
+
+
+class CronHostError(except_orm):
+    """ Raised when  the cron_for_host is executed on the wrong host """
+    pass
 
 
 class runbot_repo(models.Model):
@@ -345,7 +351,7 @@ class runbot_repo(models.Model):
         created on each runbot instance.
         """
         if hostname != fqdn():
-            return 'Not for me'
+            raise CronHostError('Not for me')
         repos = self.search([('mode', '!=', 'disabled')])
         self._update(repos)
         self._scheduler(repos.ids)

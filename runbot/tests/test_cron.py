@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from odoo.tests import TransactionCase
 from odoo.tools import mute_logger
+from odoo.addons.runbot.models.repo import CronHostError
 
 def fake_schedule(fake_self):
     for build in fake_self:
@@ -79,7 +80,8 @@ class TestCron(TransactionCase):
         })
         # Ensure that cron is not executed if fqdn does not match
         mock_fqdn.return_value = 'runbot13.foobar.com'
-        self.assertEqual('Not for me', self.repo._cron_for_host('runbot12.foobar.com'))
+        with self.assertRaises(CronHostError):
+            self.repo._cron_for_host('runbot12.foobar.com')
         # now Ensure that the build is _scheduled
         mock_fqdn.return_value = 'runbot12.foobar.com'
         self.repo._cron_for_host('runbot12.foobar.com')
