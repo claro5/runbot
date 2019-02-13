@@ -346,7 +346,7 @@ class runbot_repo(models.Model):
         repos = self.search([('mode', '!=', 'disabled')])
         self._create_pending_builds(repos)
 
-    def _cron_for_host(self, hostname):
+    def _cron_for_host(self, hostname, update_only=False):
         """ This method have to be called from a dedicated cron
         created on each runbot instance.
         """
@@ -354,5 +354,7 @@ class runbot_repo(models.Model):
             raise CronHostError('Not for me')
         repos = self.search([('mode', '!=', 'disabled')])
         self._update(repos)
+        if update_only:
+            return
         self._scheduler(repos.ids)
         self._reload_nginx()
