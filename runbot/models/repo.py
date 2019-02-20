@@ -4,6 +4,7 @@ import dateutil
 import json
 import logging
 import os
+import random
 import re
 import requests
 import signal
@@ -276,19 +277,29 @@ class runbot_repo(models.Model):
         available_slots = workers - nb_testing
         if available_slots > 0:
             # self-assign to be sure that another runbot instance cannot self assign the same builds
-            query = """UPDATE runbot_build
-                       SET host=%(host)s
-                       WHERE runbot_build.id in (
-                         SELECT runbot_build.id FROM runbot_build
-                         LEFT JOIN runbot_branch ON runbot_branch.id = runbot_build.branch_id
-                         WHERE runbot_build.repo_id IN %(repo_ids)s
-                         AND runbot_build.state='pending'
-                         AND runbot_branch.job_type != 'none'
-                         AND runbot_build.host is null
-                         ORDER BY runbot_branch.sticky DESC, runbot_branch.priority DESC, runbot_build.sequence ASC
-                         LIMIT %(available_slots)s
-                         FOR UPDATE OF runbot_build SKIP LOCKED
-                       )"""
+            query = """UPDATE
+                            runbot_build
+                        SET
+                            host = %(host)s
+                        WHERE
+                            runbot_build.id IN (
+                                SELECT
+                                    runbot_build.id
+                                FROM
+                                    runbot_build
+                                LEFT JOIN runbot_branch ON runbot_branch.id = runbot_build.branch_id
+                            WHERE
+                                runbot_build.repo_id IN %(repo_ids)s
+                                AND runbot_build.state = 'pending'
+                                AND runbot_branch.job_type != 'none'
+                                AND runbot_build.host IS NULL
+                            ORDER BY
+                                runbot_branch.sticky DESC,
+                                runbot_branch.priority DESC,
+                                runbot_build.sequence ASC
+                            FOR UPDATE OF runbot_build SKIP LOCKED
+                        LIMIT %(available_slots)s)"""
+
             self.env.cr.execute(query, {'repo_ids': tuple(ids), 'host': fqdn(), 'available_slots': available_slots})
             pending_build = Build.search(domain + domain_host + [('state', '=', 'pending')])
             if pending_build:
@@ -342,19 +353,40 @@ class runbot_repo(models.Model):
                     else:
                         _logger.debug('failed to start nginx - failed to kill orphan worker - oh well')
 
-    def _cron(self):
-        repos = self.search([('mode', '!=', 'disabled')])
-        self._create_pending_builds(repos)
+    def _get_cron_period(self):
+        """ Compute a randomized cron period with a 2 sec margin below
+        real cron timeout from config.
+        """
+        cron_limit = config.get('limit_time_real_cron')
+        req_limit = config.get('limit_time_real')
+        cron_timeout = cron_limit if cron_limit > -1 else req_limit
+        return cron_timeout - (2 + random.random())
 
-    def _cron_for_host(self, hostname, update_only=False):
+    def _cron_fetch_and_schedule(self, hostname):
+        """This method have to be called from a dedicated cron on a runbot
+        in charge of orchestration.
+        """
+        if hostname != fqdn():
+            raise CronHostError('Not for me')
+        start_time = time.time()
+        timeout = self._get_cron_period()
+        while time.time() - start_time > timeout:
+            repos = self.search([('mode', '!=', 'disabled')])
+            self._update(repos)
+            self._create_pending_builds(repos)
+            time.sleep(1)
+
+    def _cron_fetch_and_build(self, hostname):
         """ This method have to be called from a dedicated cron
         created on each runbot instance.
         """
         if hostname != fqdn():
             raise CronHostError('Not for me')
-        repos = self.search([('mode', '!=', 'disabled')])
-        self._update(repos)
-        if update_only:
-            return
-        self._scheduler(repos.ids)
-        self._reload_nginx()
+        start_time = time.time()
+        timeout = self._get_cron_timeout()
+        while time.time() - start_time > timeout:
+            repos = self.search([('mode', '!=', 'disabled')])
+            self._update(repos)
+            self._scheduler(repos.ids)
+            self._reload_nginx()
+            time.sleep(1)
