@@ -347,14 +347,14 @@ class runbot_repo(models.Model):
                     else:
                         _logger.debug('failed to start nginx - failed to kill orphan worker - oh well')
 
-    def _get_cron_period(self):
+    def _get_cron_period(self, min_period=120, min_margin=60):
         """ Compute a randomized cron period with a 2 min margin below
         real cron timeout from config.
         """
         cron_limit = config.get('limit_time_real_cron')
         req_limit = config.get('limit_time_real')
         cron_timeout = cron_limit if cron_limit > -1 else req_limit
-        return cron_timeout - (120 + random.ranint(1, 60))
+        return cron_timeout - (min_period + random.randint(1, min_margin))
 
     def _cron_fetch_and_schedule(self, hostname):
         """This method have to be called from a dedicated cron on a runbot
