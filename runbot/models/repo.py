@@ -347,28 +347,28 @@ class runbot_repo(models.Model):
                     else:
                         _logger.debug('failed to start nginx - failed to kill orphan worker - oh well')
 
-    def _get_cron_period(self, min_period=120, min_margin=60):
+    def _get_cron_period(self, min_margin=120):
         """ Compute a randomized cron period with a 2 min margin below
         real cron timeout from config.
         """
         cron_limit = config.get('limit_time_real_cron')
         req_limit = config.get('limit_time_real')
         cron_timeout = cron_limit if cron_limit > -1 else req_limit
-        return cron_timeout - (min_period + random.randint(1, min_margin))
+        return cron_timeout - (min_margin + random.randint(1, 60))
 
     def _cron_fetch_and_schedule(self, hostname):
         """This method have to be called from a dedicated cron on a runbot
         in charge of orchestration.
         """
         if hostname != fqdn():
-            return
+            return 'Not for me'
         start_time = time.time()
         timeout = self._get_cron_period()
         while time.time() - start_time < timeout:
             repos = self.search([('mode', '!=', 'disabled')])
             self._update(repos)
             self._create_pending_builds(repos)
-            self.cr.commit()
+            self.env.cr.commit()
             time.sleep(1)
 
     def _cron_fetch_and_build(self, hostname):
@@ -376,13 +376,13 @@ class runbot_repo(models.Model):
         created on each runbot instance.
         """
         if hostname != fqdn():
-            return
+            return 'Not for me'
         start_time = time.time()
-        timeout = self._get_cron_timeout()
+        timeout = self._get_cron_period()
         while time.time() - start_time < timeout:
             repos = self.search([('mode', '!=', 'disabled')])
             self._update(repos)
             self._scheduler(repos.ids)
-            self.cr.commit()
+            self.env.cr.commit()
             self._reload_nginx()
             time.sleep(1)
