@@ -12,17 +12,11 @@ import subprocess
 import time
 
 from odoo import models, fields, api
-from odoo.exceptions import except_orm
 from odoo.modules.module import get_module_resource
 from odoo.tools import config
 from ..common import fqdn, dt2time
 
 _logger = logging.getLogger(__name__)
-
-
-class CronHostError(except_orm):
-    """ Raised when  the cron_for_host is executed on the wrong host """
-    pass
 
 
 class runbot_repo(models.Model):
@@ -354,26 +348,27 @@ class runbot_repo(models.Model):
                         _logger.debug('failed to start nginx - failed to kill orphan worker - oh well')
 
     def _get_cron_period(self):
-        """ Compute a randomized cron period with a 2 sec margin below
+        """ Compute a randomized cron period with a 2 min margin below
         real cron timeout from config.
         """
         cron_limit = config.get('limit_time_real_cron')
         req_limit = config.get('limit_time_real')
         cron_timeout = cron_limit if cron_limit > -1 else req_limit
-        return cron_timeout - (2 + random.random())
+        return cron_timeout - (120 + random.ranint(1, 60))
 
     def _cron_fetch_and_schedule(self, hostname):
         """This method have to be called from a dedicated cron on a runbot
         in charge of orchestration.
         """
         if hostname != fqdn():
-            raise CronHostError('Not for me')
+            return
         start_time = time.time()
         timeout = self._get_cron_period()
-        while time.time() - start_time > timeout:
+        while time.time() - start_time < timeout:
             repos = self.search([('mode', '!=', 'disabled')])
             self._update(repos)
             self._create_pending_builds(repos)
+            self.cr.commit()
             time.sleep(1)
 
     def _cron_fetch_and_build(self, hostname):
@@ -381,12 +376,13 @@ class runbot_repo(models.Model):
         created on each runbot instance.
         """
         if hostname != fqdn():
-            raise CronHostError('Not for me')
+            return
         start_time = time.time()
         timeout = self._get_cron_timeout()
-        while time.time() - start_time > timeout:
+        while time.time() - start_time < timeout:
             repos = self.search([('mode', '!=', 'disabled')])
             self._update(repos)
             self._scheduler(repos.ids)
+            self.cr.commit()
             self._reload_nginx()
             time.sleep(1)

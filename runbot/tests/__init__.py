@@ -5,4 +5,3 @@ from . import test_jobs
 from . import test_frontend
 from . import test_job_types
 from . import test_schedule
-from . import test_cron
